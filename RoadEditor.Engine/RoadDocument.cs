@@ -59,6 +59,16 @@ namespace RoadEditor.Engine
         /// </summary>
         public const float MaxRise = 10f;
 
+        /// <summary>
+        /// Largest height difference between a bridge's two ends. The deck is
+        /// level with the higher bank and the End piece ramps down to the other;
+        /// a 45 drop made a tall wedge in-game. Maxis's bridges drop 0.4, 5 and 26.
+        /// </summary>
+        public const float MaxBridgeDrop = 10f;
+
+        /// <summary>Tree entry size in the NHTR tree list (Mootilda's iTreeLength).</summary>
+        public const int TreeSize = 38;
+
         public string Path { get; }
         /// <summary>Terrain grid size in points; squares run 0..Width-2 by 0..Height-2.</summary>
         public int Width { get; }
@@ -71,7 +81,13 @@ namespace RoadEditor.Engine
         private List<Bridge> _bridges = new();
         private byte[] _originalBridgeBytes = Array.Empty<byte>();
         private bool _bridgesChanged;
-        private readonly Stack<(Dictionary<(int, int), byte[]> roads, List<Bridge> bridges, bool changed)> _undo = new();
+        private List<byte[]> _trees = new();
+        private byte[] _originalTreeBytes = Array.Empty<byte>();
+        private bool _treesChanged;
+        private readonly Stack<(Dictionary<(int, int), byte[]> roads, List<Bridge> bridges, bool changed, List<byte[]> trees, bool treesChanged)> _undo = new();
+
+        /// <summary>Trees removed since the last save.</summary>
+        public int TreesRemoved => _originalTreeBytes.Length / TreeSize - _trees.Count;
         private DateTime _loadedWriteTime;
 
         public bool Dirty { get; private set; }
@@ -108,6 +124,9 @@ namespace RoadEditor.Engine
                     _order.Add(sq);
                 }
                 _originalBridgeBytes = nhtr.Bridges;
+                _originalTreeBytes = nhtr.Trees;
+                for (int i = 0; i < _originalTreeBytes.Length / TreeSize; i++)
+                    _trees.Add(_originalTreeBytes.Skip(i * TreeSize).Take(TreeSize).ToArray());
                 _bridges = Bridges.Parse(_originalBridgeBytes);
 
                 foreach (IPackedFileDescriptor pfd in pkg.FindFiles(LotDescription))
@@ -208,7 +227,7 @@ namespace RoadEditor.Engine
 
         /// <summary>Call once before each stroke so Undo takes back the whole stroke.</summary>
         public void BeginStroke() =>
-            _undo.Push((_roads.ToDictionary(kv => kv.Key, kv => (byte[])kv.Value.Clone()), _bridges.ToList(), _bridgesChanged));
+            _undo.Push((_roads.ToDictionary(kv => kv.Key, kv => (byte[])kv.Value.Clone()), _bridges.ToList(), _bridgesChanged, _trees.ToList(), _treesChanged));
 
         /// <summary>Drops the snapshot BeginStroke took, when the stroke ended up changing nothing.</summary>
         public void DiscardStroke() { if (_undo.Count > 0) _undo.Pop(); }
@@ -216,10 +235,12 @@ namespace RoadEditor.Engine
         public bool Undo()
         {
             if (_undo.Count == 0) return false;
-            var (roads, bridges, changed) = _undo.Pop();
+            var (roads, bridges, changed, trees, treesChanged) = _undo.Pop();
             _roads = roads.ToDictionary(kv => ((int, int))kv.Key, kv => kv.Value);
             _bridges = bridges;
             _bridgesChanged = changed;
+            _trees = trees;
+            _treesChanged = treesChanged;
             Dirty = true;
             return true;
         }
@@ -238,6 +259,7 @@ namespace RoadEditor.Engine
             foreach (var (_, dx, dy) in BridgesEndingAt(x, y))
                 mask |= RoadTiles.BitToward(dx, dy);
             _roads[(x, y)] = RoadTiles.Build(x, y, mask, (gx, gy) => Terrain[gy, gx]);
+            ClearTrees(x, y, x, y);
             if (!_order.Contains((x, y))) _order.Add((x, y));
 
             foreach (var (dx, dy) in RoadTiles.Neighbours)
@@ -312,6 +334,11 @@ namespace RoadEditor.Engine
             float deck = alongX
                 ? new[] { H(from, across), H(from, across + 1), H(to + 1, across), H(to + 1, across + 1) }.Max()
                 : new[] { H(across, from), H(across + 1, from), H(across, to + 1), H(across + 1, to + 1) }.Max();
+            float lowLine = alongX ? Math.Max(H(from, across), H(from, across + 1)) : Math.Max(H(across, from), H(across + 1, from));
+            float highLine = alongX ? Math.Max(H(to + 1, across), H(to + 1, across + 1)) : Math.Max(H(across, to + 1), H(across + 1, to + 1));
+            if (Math.Abs(lowLine - highLine) > MaxBridgeDrop)
+                return $"The two banks differ in height by {Math.Abs(lowLine - highLine):F0} (the limit is {MaxBridgeDrop:F0}). " +
+                       "The deck is level with the higher bank, so the other end would be a tall ramp — pick banks of similar height.";
             deck += RoadTiles.SpaceAboveTerrain;
             for (int k = from + 1; k <= to; k++)
                 for (int j = 0; j <= 1; j++)
@@ -320,6 +347,7 @@ namespace RoadEditor.Engine
 
             var bridge = Bridges.Build(alongX, from, to, across, deck);
             _bridges.Add(bridge);
+            if (alongX) ClearTrees(from, across, to, across); else ClearTrees(across, from, across, to);
             _bridgesChanged = true;
             foreach (var end in new[] { a, b })
             {
@@ -335,6 +363,24 @@ namespace RoadEditor.Engine
             }
             Dirty = true;
             return null;
+        }
+
+        /// <summary>
+        /// Removes trees whose footprint overlaps squares x0..x1 by y0..y1.
+        /// Maxis roads and bridges never have trees on them; the game doesn't
+        /// clear them itself. Decorations are left alone -- players place those.
+        /// </summary>
+        private void ClearTrees(int x0, int y0, int x1, int y1)
+        {
+            float ax = x0 * 10, ay = y0 * 10, bx = (x1 + 1) * 10, by = (y1 + 1) * 10;
+            int before = _trees.Count;
+            _trees.RemoveAll(t =>
+            {
+                float tx0 = BitConverter.ToSingle(t, 13), ty0 = BitConverter.ToSingle(t, 17);
+                float tx1 = BitConverter.ToSingle(t, 21), ty1 = BitConverter.ToSingle(t, 25);
+                return tx0 < bx && tx1 > ax && ty0 < by && ty1 > ay;
+            });
+            if (_trees.Count != before) _treesChanged = true;
         }
 
         public void RemoveBridge(Bridge bridge)
@@ -385,6 +431,7 @@ namespace RoadEditor.Engine
             nhtr.Roads = bytes.ToArray();
             nhtr.Bridges = _bridgesChanged ? _bridges.SelectMany(b => b.Pieces).SelectMany(p => p).ToArray()
                                            : _originalBridgeBytes;
+            nhtr.Trees = _treesChanged ? _trees.SelectMany(t => t).ToArray() : _originalTreeBytes;
             nhtr.Rewrite();
 
             string backup = System.IO.Path.ChangeExtension(Path, ".bkp");
@@ -396,6 +443,8 @@ namespace RoadEditor.Engine
             _loadedWriteTime = File.GetLastWriteTimeUtc(Path);
             _originalBridgeBytes = nhtr.Bridges;
             _bridgesChanged = false;
+            _originalTreeBytes = nhtr.Trees;
+            _treesChanged = false;
             _undo.Clear();
             Dirty = false;
             return backup;

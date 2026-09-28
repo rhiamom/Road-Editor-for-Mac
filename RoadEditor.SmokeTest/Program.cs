@@ -88,6 +88,13 @@ foreach (string code in codes)
         Check(doc.BridgeAt(br.AlongX ? br.From : br.Across, br.AlongX ? br.Across : br.From) == null, $"erasing a bridge square removes the bridge {br.From}..{br.To}");
         Check(doc.MaskAt(lo.x, lo.y) != loMask && doc.MaskAt(hi.x, hi.y) != hiMask, "its end roads lose the bridge connection");
         string? why = doc.AddBridge(lo, hi);
+        if (why != null && why.Contains("differ in height"))
+        {
+            // Built before the end-height limit existed; the rules now refuse it, which is the point.
+            Console.WriteLine($"   info: this bridge breaks today's rules ({why[..why.IndexOf('(')].Trim()}); skipping rebuild checks");
+            doc.Undo();
+            continue;
+        }
         Check(why == null, "rebuild it between the same two roads" + (why == null ? "" : ": " + why));
         var rebuilt = doc.BridgeList.FirstOrDefault(b => b.From == br.From && b.To == br.To && b.Across == br.Across);
         if (rebuilt != null)

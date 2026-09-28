@@ -68,7 +68,9 @@ public partial class MainWindow : Window
         this.Get<Button>("SaveButton").IsEnabled = dirty;
         this.Get<Button>("UndoButton").IsEnabled = _doc?.CanUndo == true;
         Title = _current == null ? "Road Editor for Mac" : $"Road Editor for Mac — {_current.Name}{(dirty ? " •" : "")}";
-        if (_doc != null && dirty) Say($"{_doc.RoadCount} road squares — not saved yet.");
+        if (_doc != null && dirty)
+            Say($"{_doc.RoadCount} road squares, {_doc.BridgeCount} bridge(s)" +
+                (_doc.TreesRemoved > 0 ? $", {_doc.TreesRemoved} tree(s) cleared from under them" : "") + " — not saved yet.");
     }
 
     private void ShowHover((int x, int y)? sq)
