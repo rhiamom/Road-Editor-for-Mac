@@ -31,7 +31,7 @@ using System.Linq;
 
 namespace RoadEditor.Engine
 {
-    public enum Ground { Open, Water, Steep, Edge, Lot, LotFront }
+    public enum Ground { Open, Water, Steep, Edge, Lot, LotFront, Bridge }
 
     public sealed class LotInfo
     {
@@ -68,12 +68,16 @@ namespace RoadEditor.Engine
 
         private readonly List<(int x, int y)> _order = new();
         private Dictionary<(int x, int y), byte[]> _roads = new();
-        private readonly Stack<Dictionary<(int, int), byte[]>> _undo = new();
+        private List<Bridge> _bridges = new();
+        private byte[] _originalBridgeBytes = Array.Empty<byte>();
+        private bool _bridgesChanged;
+        private readonly Stack<(Dictionary<(int, int), byte[]> roads, List<Bridge> bridges, bool changed)> _undo = new();
         private DateTime _loadedWriteTime;
 
         public bool Dirty { get; private set; }
         public int RoadCount => _roads.Count;
-        public int OriginalBridgeCount { get; }
+        public int BridgeCount => _bridges.Count;
+        public IReadOnlyList<Bridge> BridgeList => _bridges;
         public bool CanUndo => _undo.Count > 0;
 
         public RoadDocument(string path)
@@ -103,7 +107,8 @@ namespace RoadEditor.Engine
                     _roads[sq] = tile;
                     _order.Add(sq);
                 }
-                OriginalBridgeCount = nhtr.Bridges.Length;
+                _originalBridgeBytes = nhtr.Bridges;
+                _bridges = Bridges.Parse(_originalBridgeBytes);
 
                 foreach (IPackedFileDescriptor pfd in pkg.FindFiles(LotDescription))
                 {
@@ -149,6 +154,7 @@ namespace RoadEditor.Engine
         public Ground GroundAt(int x, int y)
         {
             if (x < 1 || y < 1 || x >= Width - 2 || y >= Height - 2) return Ground.Edge;
+            if (BridgeAt(x, y) != null) return Ground.Bridge;
             var lot = LotAt(x, y);
             if (lot != null) return lot.IsFront(x, y) ? Ground.LotFront : Ground.Lot;
             return Terrain_(x, y);
@@ -170,6 +176,7 @@ namespace RoadEditor.Engine
         {
             var ground = GroundAt(x, y);
             if (ground == Ground.Edge) return "Too close to the edge of the neighborhood.";
+            if (ground == Ground.Bridge) return "A bridge is here.";
             if (ground == Ground.Lot) return $"Inside the lot \"{LotAt(x, y)!.Name}\".";
             // A lot's front gets no exemption: a road on a cliff looks broken whether or not a lot uses it.
             string where = ground == Ground.LotFront ? $" (front of the lot \"{LotAt(x, y)!.Name}\")" : "";
@@ -184,6 +191,8 @@ namespace RoadEditor.Engine
         /// <summary>Why this road square can't be removed, or null if it can.</summary>
         public string? WhyNotErase(int x, int y)
         {
+            if (BridgesEndingAt(x, y).Any())
+                return "A bridge ends on this road; erase the bridge first.";
             var lot = LotAt(x, y);
             // A lot's front road is protected -- unless it sits on ground no road should be on.
             if (lot != null && lot.IsFront(x, y) && !GroundRefuses(x, y))
@@ -199,12 +208,18 @@ namespace RoadEditor.Engine
 
         /// <summary>Call once before each stroke so Undo takes back the whole stroke.</summary>
         public void BeginStroke() =>
-            _undo.Push(_roads.ToDictionary(kv => kv.Key, kv => (byte[])kv.Value.Clone()));
+            _undo.Push((_roads.ToDictionary(kv => kv.Key, kv => (byte[])kv.Value.Clone()), _bridges.ToList(), _bridgesChanged));
+
+        /// <summary>Drops the snapshot BeginStroke took, when the stroke ended up changing nothing.</summary>
+        public void DiscardStroke() { if (_undo.Count > 0) _undo.Pop(); }
 
         public bool Undo()
         {
             if (_undo.Count == 0) return false;
-            _roads = _undo.Pop().ToDictionary(kv => ((int, int))kv.Key, kv => kv.Value);
+            var (roads, bridges, changed) = _undo.Pop();
+            _roads = roads.ToDictionary(kv => ((int, int))kv.Key, kv => kv.Value);
+            _bridges = bridges;
+            _bridgesChanged = changed;
             Dirty = true;
             return true;
         }
@@ -220,6 +235,8 @@ namespace RoadEditor.Engine
             int mask = 0;
             foreach (var (dx, dy) in RoadTiles.Neighbours)
                 if (IsRoad(x + dx, y + dy)) mask |= RoadTiles.BitToward(dx, dy);
+            foreach (var (_, dx, dy) in BridgesEndingAt(x, y))
+                mask |= RoadTiles.BitToward(dx, dy);
             _roads[(x, y)] = RoadTiles.Build(x, y, mask, (gx, gy) => Terrain[gy, gx]);
             if (!_order.Contains((x, y))) _order.Add((x, y));
 
@@ -233,6 +250,8 @@ namespace RoadEditor.Engine
         /// <summary>Removes a road square. Returns null on success, or the reason it was refused.</summary>
         public string? Erase(int x, int y)
         {
+            var bridge = BridgeAt(x, y);
+            if (bridge != null) { RemoveBridge(bridge); return null; }
             if (!IsRoad(x, y)) return null;
             string? why = WhyNotErase(x, y);
             if (why != null) return why;
@@ -243,6 +262,93 @@ namespace RoadEditor.Engine
                     RoadTiles.Retype(n, RoadTiles.MaskOf(n) & ~RoadTiles.BitToward(-dx, -dy));
             Dirty = true;
             return null;
+        }
+
+        // ---- bridges -------------------------------------------------------
+
+        public Bridge? BridgeAt(int x, int y) => _bridges.FirstOrDefault(b => b.Covers(x, y));
+
+        /// <summary>Bridges whose end meets the road square (x, y), with the direction toward each.</summary>
+        public IEnumerable<(Bridge bridge, int dx, int dy)> BridgesEndingAt(int x, int y)
+        {
+            foreach (var b in _bridges)
+            {
+                var (low, high) = b.EndRoads();
+                if (low == (x, y)) yield return (b, b.AlongX ? 1 : 0, b.AlongX ? 0 : 1);
+                if (high == (x, y)) yield return (b, b.AlongX ? -1 : 0, b.AlongX ? 0 : -1);
+            }
+        }
+
+        /// <summary>
+        /// Builds a bridge between two road squares (a and b), which must be in
+        /// the same row or column. The bridge covers the squares between them;
+        /// either end square gets a road if it hasn't one. Null on success, or
+        /// the reason it was refused (nothing is changed then).
+        /// </summary>
+        public string? AddBridge((int x, int y) a, (int x, int y) b)
+        {
+            if (a.x != b.x && a.y != b.y) return "A bridge must run straight: pick two ends in the same row or column.";
+            bool alongX = a.y == b.y;
+            int lo = alongX ? Math.Min(a.x, b.x) : Math.Min(a.y, b.y), hi = alongX ? Math.Max(a.x, b.x) : Math.Max(a.y, b.y);
+            int across = alongX ? a.y : a.x;
+            int from = lo + 1, to = hi - 1;
+            string? why = Bridges.WhyNotLength(to - from + 1);
+            if (why != null) return why;
+
+            for (int k = from; k <= to; k++)
+            {
+                var (x, y) = alongX ? (k, across) : (across, k);
+                if (!InGrid(x, y) || GroundAt(x, y) == Ground.Edge) return "The bridge would run off the edge of the neighborhood.";
+                if (IsRoad(x, y)) return $"There's already a road under the bridge's path at {x}, {y}.";
+                if (BridgeAt(x, y) != null) return "The bridge would cross another bridge.";
+                if (LotAt(x, y) is { } lot) return $"The bridge would cross the lot \"{lot.Name}\".";
+            }
+            foreach (var end in new[] { a, b })
+                if (!IsRoad(end.x, end.y) && WhyNotDraw(end.x, end.y) is { } no)
+                    return $"The bridge can't end at {end.x}, {end.y}: {no}";
+
+            // Deck: 0.4 above the higher of the two lines where the bridge meets its roads.
+            float H(int px, int py) => Terrain[py, px];
+            float deck = alongX
+                ? new[] { H(from, across), H(from, across + 1), H(to + 1, across), H(to + 1, across + 1) }.Max()
+                : new[] { H(across, from), H(across + 1, from), H(across, to + 1), H(across + 1, to + 1) }.Max();
+            deck += RoadTiles.SpaceAboveTerrain;
+            for (int k = from + 1; k <= to; k++)
+                for (int j = 0; j <= 1; j++)
+                    if ((alongX ? H(k, across + j) : H(across + j, k)) > deck)
+                        return "The ground rises above the bridge deck along the way — bridges are level, so pick a lower crossing.";
+
+            var bridge = Bridges.Build(alongX, from, to, across, deck);
+            _bridges.Add(bridge);
+            _bridgesChanged = true;
+            foreach (var end in new[] { a, b })
+            {
+                if (!IsRoad(end.x, end.y)) Draw(end.x, end.y);    // picks up the bridge bit itself
+                else
+                {
+                    var tile = _roads[end];
+                    int bit = 0;
+                    foreach (var (_, dx, dy) in BridgesEndingAt(end.x, end.y).Where(e => e.bridge == bridge))
+                        bit |= RoadTiles.BitToward(dx, dy);
+                    RoadTiles.Retype(tile, RoadTiles.MaskOf(tile) | bit);
+                }
+            }
+            Dirty = true;
+            return null;
+        }
+
+        public void RemoveBridge(Bridge bridge)
+        {
+            var ends = BridgesEndingAt(bridge.EndRoads().low.x, bridge.EndRoads().low.y)
+                .Concat(BridgesEndingAt(bridge.EndRoads().high.x, bridge.EndRoads().high.y))
+                .Where(e => e.bridge == bridge).ToList();
+            var (low, high) = bridge.EndRoads();
+            _bridges.Remove(bridge);
+            _bridgesChanged = true;
+            foreach (var (sq, e) in new[] { low, high }.Zip(ends))
+                if (_roads.TryGetValue(sq, out var tile))
+                    RoadTiles.Retype(tile, RoadTiles.MaskOf(tile) & ~RoadTiles.BitToward(e.dx, e.dy));
+            Dirty = true;
         }
 
         // ---- saving --------------------------------------------------------
@@ -277,6 +383,8 @@ namespace RoadEditor.Engine
             var pkg = SimPe.Packages.File.LoadFromFile(Path);
             var nhtr = new R_NHTR(pkg, pkg.FindFile(NHTR, 0, 0xFFFFFFFF, 0));
             nhtr.Roads = bytes.ToArray();
+            nhtr.Bridges = _bridgesChanged ? _bridges.SelectMany(b => b.Pieces).SelectMany(p => p).ToArray()
+                                           : _originalBridgeBytes;
             nhtr.Rewrite();
 
             string backup = System.IO.Path.ChangeExtension(Path, ".bkp");
@@ -286,6 +394,8 @@ namespace RoadEditor.Engine
             File.WriteAllBytes(Path, ms.ToArray());
 
             _loadedWriteTime = File.GetLastWriteTimeUtc(Path);
+            _originalBridgeBytes = nhtr.Bridges;
+            _bridgesChanged = false;
             _undo.Clear();
             Dirty = false;
             return backup;

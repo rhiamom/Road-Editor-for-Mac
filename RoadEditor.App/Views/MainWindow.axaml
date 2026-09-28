@@ -27,6 +27,7 @@
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#96781e"/><TextBlock Text="Lot front too steep for a road" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#c4403a"/><TextBlock Text="Lot" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#3468ba"/><TextBlock Text="Water" FontSize="12"/></StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#968064"/><TextBlock Text="Bridge" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#4a6a36"/><TextBlock Text="Too steep for a road" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#e65a1e"/><TextBlock Text="Road that connects to nothing" FontSize="12"/></StackPanel>
       </StackPanel>
@@ -37,6 +38,8 @@
     <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10" VerticalAlignment="Bottom">
       <ToggleButton Name="DrawTool" Content="Draw" IsChecked="True" MinWidth="70"/>
       <ToggleButton Name="EraseTool" Content="Erase" MinWidth="70"/>
+      <ToggleButton Name="BridgeTool" Content="Bridge" MinWidth="70"
+                    ToolTip.Tip="Drag from a road on one bank straight across to the road on the other. Erase on any bridge square removes the whole bridge."/>
       <Button Name="UndoButton" Content="Undo" MinWidth="70" IsEnabled="False"/>
       <Border Width="14"/>
       <Button Name="ZoomOut" Content="−" Width="34"/>

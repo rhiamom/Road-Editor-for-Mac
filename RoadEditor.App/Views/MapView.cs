@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 
 namespace RoadEditor.App.Views;
 
-public enum Tool { Draw, Erase }
+public enum Tool { Draw, Erase, Bridge }
 
 public sealed class MapView : Control
 {
@@ -32,6 +32,7 @@ public sealed class MapView : Control
     private (int x, int y)? _hover;
     private (int x, int y)? _last;
     private bool _stroking;
+    private (int x, int y)? _bridgeStart, _bridgeEnd;
 
     public Tool Tool { get; set; } = Tool.Draw;
 
@@ -39,6 +40,8 @@ public sealed class MapView : Control
     public event Action<(int x, int y)?>? HoverChanged;
     /// <summary>A square was refused; the text says why.</summary>
     public event Action<string>? Refused;
+    /// <summary>Progress text while dragging out a bridge.</summary>
+    public event Action<string>? BridgeHint;
     /// <summary>Roads changed.</summary>
     public event Action? Edited;
 
@@ -66,6 +69,7 @@ public sealed class MapView : Control
     private uint ColourAt(int x, int y, float lo, float hi)
     {
         var d = _doc!;
+        if (d.BridgeAt(x, y) != null) return Bgra(150, 128, 100);
         if (d.IsRoad(x, y))
         {
             if (d.MaskAt(x, y) == 0) return Bgra(230, 90, 30);                   // connects to nothing
@@ -120,9 +124,16 @@ public sealed class MapView : Control
         for (int k = 10; k < Columns; k += 10) context.DrawLine(grid, new Point(k * _scale, 0), new Point(k * _scale, dest.Height));
         for (int k = 10; k < Rows; k += 10) context.DrawLine(grid, new Point(0, k * _scale), new Point(dest.Width, k * _scale));
 
+        if (_bridgeStart is { } bs && _bridgeEnd is { } be)
+        {
+            var pen = new Pen(Brushes.White, 2, new DashStyle(new double[] { 2, 2 }, 0));
+            int x0 = Math.Min(bs.x, be.x), x1 = Math.Max(bs.x, be.x), y0 = Math.Min(bs.y, be.y), y1 = Math.Max(bs.y, be.y);
+            context.DrawRectangle(null, pen, new Rect(y0 * _scale, x0 * _scale, (y1 - y0 + 1) * _scale, (x1 - x0 + 1) * _scale).Inflate(1));
+        }
+
         if (_hover is { } hv)
         {
-            var colour = Tool == Tool.Draw ? Colors.White : Color.FromRgb(255, 90, 90);
+            var colour = Tool == Tool.Erase ? Color.FromRgb(255, 90, 90) : Colors.White;
             context.DrawRectangle(null, new Pen(new SolidColorBrush(colour), 2),
                 new Rect(hv.y * _scale, hv.x * _scale, _scale, _scale).Inflate(1));
         }
@@ -161,6 +172,14 @@ public sealed class MapView : Control
         if (_doc == null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         var sq = SquareAt(e.GetPosition(this));
         if (sq == null) return;
+        if (Tool == Tool.Bridge)
+        {
+            _bridgeStart = _bridgeEnd = sq;
+            e.Pointer.Capture(this);
+            BridgeHint?.Invoke("Drag across to the road on the other side, then let go.");
+            InvalidateVisual();
+            return;
+        }
         _doc.BeginStroke();
         _stroking = true;
         _last = sq;
@@ -175,6 +194,16 @@ public sealed class MapView : Control
         base.OnPointerMoved(e);
         var sq = SquareAt(e.GetPosition(this));
         if (sq != _hover) { _hover = sq; HoverChanged?.Invoke(sq); InvalidateVisual(); }
+        if (_bridgeStart is { } start && sq is { } now)
+        {
+            // Snap to the row or column, whichever the pointer is further along.
+            _bridgeEnd = Math.Abs(now.x - start.x) >= Math.Abs(now.y - start.y) ? (now.x, start.y) : (start.x, now.y);
+            int span = Math.Abs(_bridgeEnd.Value.x - start.x) + Math.Abs(_bridgeEnd.Value.y - start.y) - 1;
+            BridgeHint?.Invoke(span < 1 ? "Drag across to the road on the other side, then let go."
+                : $"Bridge of {span} squares" + (Bridges.WhyNotLength(span) is { } w ? " — " + w : " — let go to build it."));
+            InvalidateVisual();
+            return;
+        }
         if (!_stroking || sq == null || sq == _last) return;
         Line(_last!.Value, sq.Value);
         _last = sq;
@@ -185,6 +214,20 @@ public sealed class MapView : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_bridgeStart is { } a && _bridgeEnd is { } b && _doc != null)
+        {
+            _bridgeStart = _bridgeEnd = null;
+            e.Pointer.Capture(null);
+            if (a != b)
+            {
+                _doc.BeginStroke();
+                string? why = _doc.AddBridge(a, b);
+                if (why != null) { _doc.DiscardStroke(); Refused?.Invoke(why); }
+                else { Rebuild(); Edited?.Invoke(); }
+            }
+            InvalidateVisual();
+            return;
+        }
         _stroking = false;
         _last = null;
         e.Pointer.Capture(null);

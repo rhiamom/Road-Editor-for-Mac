@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         this.Get<ListBox>("Hoods").SelectionChanged += HoodSelected;
         this.Get<ToggleButton>("DrawTool").Click += (_, _) => SetTool(Tool.Draw);
         this.Get<ToggleButton>("EraseTool").Click += (_, _) => SetTool(Tool.Erase);
+        this.Get<ToggleButton>("BridgeTool").Click += (_, _) => SetTool(Tool.Bridge);
         this.Get<Button>("UndoButton").Click += (_, _) => { if (_doc?.Undo() == true) { _map.Rebuild(); Refresh(); } };
         this.Get<Button>("ZoomIn").Click += (_, _) => _map.Scale += 1;
         this.Get<Button>("ZoomOut").Click += (_, _) => _map.Scale -= 1;
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
 
         _map.Edited += Refresh;
         _map.Refused += why => Say(why);
+        _map.BridgeHint += Say;
         _map.HoverChanged += ShowHover;
         Closing += OnClosing;
     }
@@ -56,6 +58,8 @@ public partial class MainWindow : Window
         _map.Tool = tool;
         this.Get<ToggleButton>("DrawTool").IsChecked = tool == Tool.Draw;
         this.Get<ToggleButton>("EraseTool").IsChecked = tool == Tool.Erase;
+        this.Get<ToggleButton>("BridgeTool").IsChecked = tool == Tool.Bridge;
+        if (tool == Tool.Bridge) Say("Bridge: drag from a road on one side straight across to a road on the other.");
     }
 
     private void Refresh()
@@ -78,9 +82,11 @@ public partial class MainWindow : Window
             Ground.Steep => "too steep",
             Ground.Water => "water",
             Ground.Edge => "map edge",
+            Ground.Bridge => "bridge",
             _ => "open ground",
         };
         if (_doc.IsRoad(x, y)) what = "road · " + what;
+        if (_doc.BridgeAt(x, y) is { } br) what = $"bridge, deck {br.Deck:F1}";
         text.Text = $"{x}, {y} · height {_doc.Terrain[y, x]:F1} · rise {_doc.Rise(x, y):F1} · {what}";
     }
 
@@ -136,7 +142,7 @@ public partial class MainWindow : Window
             _map.Document = _doc;
             FitZoom();
             Say($"{hood.Name}: {_doc.RoadCount} road squares, {_doc.Lots.Count} lots." +
-                (_doc.OriginalBridgeCount > 0 ? " Bridges are kept as they are." : ""));
+                (_doc.BridgeCount > 0 ? $" {_doc.BridgeCount} bridge(s)." : ""));
         }
         catch (Exception ex)
         {

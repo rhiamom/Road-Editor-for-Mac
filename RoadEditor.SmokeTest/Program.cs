@@ -75,6 +75,31 @@ foreach (string code in codes)
     }
     else Console.WriteLine("   (no erasable straight square found)");
 
+    // 3b. Bridges: untouched save keeps them; deck formula; erase + rebuild gives Maxis's pieces back.
+    doc = new RoadDocument(work);
+    Check(BridgeBytes(work).SequenceEqual(BridgeBytes(real)), $"bridge list unchanged by saving ({doc.BridgeCount} bridge(s))");
+    foreach (var br in doc.BridgeList.ToList())
+    {
+        var (lo, hi) = br.EndRoads();
+        var maxis = br.Pieces.OrderBy(p => BitConverter.ToSingle(p, br.AlongX ? 13 : 17)).ToList();
+        int loMask = doc.MaskAt(lo.x, lo.y), hiMask = doc.MaskAt(hi.x, hi.y);
+        doc.BeginStroke();
+        doc.Erase(br.AlongX ? br.From : br.Across, br.AlongX ? br.Across : br.From);
+        Check(doc.BridgeAt(br.AlongX ? br.From : br.Across, br.AlongX ? br.Across : br.From) == null, $"erasing a bridge square removes the bridge {br.From}..{br.To}");
+        Check(doc.MaskAt(lo.x, lo.y) != loMask && doc.MaskAt(hi.x, hi.y) != hiMask, "its end roads lose the bridge connection");
+        string? why = doc.AddBridge(lo, hi);
+        Check(why == null, "rebuild it between the same two roads" + (why == null ? "" : ": " + why));
+        var rebuilt = doc.BridgeList.FirstOrDefault(b => b.From == br.From && b.To == br.To && b.Across == br.Across);
+        if (rebuilt != null)
+        {
+            Check(Math.Abs(rebuilt.Deck - br.Deck) < 0.01f, $"deck height from the terrain matches Maxis ({rebuilt.Deck:F2} vs {br.Deck:F2})");
+            int same = maxis.Zip(rebuilt.Pieces).Count(z => Enumerable.Range(0, 145).All(k => k == 119 || z.First[k] == z.Second[k]));
+            Check(same == maxis.Count, $"rebuilt pieces match Maxis ({same}/{maxis.Count}, before the model-rotation bytes)");
+        }
+        Check(doc.MaskAt(lo.x, lo.y) == loMask && doc.MaskAt(hi.x, hi.y) == hiMask, "end roads get their bridge connection back");
+        Check(doc.Erase(lo.x, lo.y) != null, "refuses to erase a road a bridge ends on");
+    }
+
     // 4. The rules.
     doc = new RoadDocument(work);
     var front = doc.Lots.Select(l => doc.Roads.FirstOrDefault(r => l.IsFront(r.x, r.y) && l.Contains(r.x, r.y))).FirstOrDefault(r => r != default);
@@ -106,6 +131,14 @@ static byte[] RoadBytes(string path)
 {
     var pkg = SimPe.Packages.File.LoadFromFile(path);
     var r = new HoodReplace.R_NHTR(pkg, pkg.FindFile(RoadDocument.NHTR, 0, 0xFFFFFFFF, 0)).Roads;
+    pkg.ForgetUpdate(); pkg.Close();
+    return r;
+}
+
+static byte[] BridgeBytes(string path)
+{
+    var pkg = SimPe.Packages.File.LoadFromFile(path);
+    var r = new HoodReplace.R_NHTR(pkg, pkg.FindFile(RoadDocument.NHTR, 0, 0xFFFFFFFF, 0)).Bridges;
     pkg.ForgetUpdate(); pkg.Close();
     return r;
 }
