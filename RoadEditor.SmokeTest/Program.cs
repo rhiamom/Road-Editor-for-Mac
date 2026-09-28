@@ -86,6 +86,12 @@ foreach (string code in codes)
         int iy = lot.Orientation == 3 ? lot.Left + 1 : lot.Orientation == 1 ? lot.Left : lot.Left;
         Check(doc.Draw(ix, iy) != null, $"refuses to draw inside a lot at {ix},{iy}");
     }
+    // Lot fronts obey the ground limits; roads already on bad fronts may be erased.
+    var squares = Enumerable.Range(1, doc.Width - 3).SelectMany(x => Enumerable.Range(1, doc.Height - 3).Select(y => (x, y))).ToList();
+    var badFront = squares.FirstOrDefault(q => doc.GroundAt(q.x, q.y) == Ground.LotFront && doc.GroundRefuses(q.x, q.y) && !doc.IsRoad(q.x, q.y));
+    if (badFront != default) Check(doc.Draw(badFront.x, badFront.y) != null, $"refuses to draw on a steep/wet lot front at {badFront.x},{badFront.y}");
+    var badRoad = doc.Roads.FirstOrDefault(q => doc.GroundAt(q.x, q.y) == Ground.LotFront && doc.GroundRefuses(q.x, q.y));
+    if (badRoad != default) Check(doc.Erase(badRoad.x, badRoad.y) == null, $"allows erasing a lot-front road on steep/wet ground at {badRoad.x},{badRoad.y}");
     var counts = Enumerable.Range(1, doc.Width - 3).SelectMany(x => Enumerable.Range(1, doc.Height - 3).Select(y => doc.GroundAt(x, y)))
                            .GroupBy(g => g).ToDictionary(g => g.Key, g => g.Count());
     Console.WriteLine("   ground: " + string.Join(", ", counts.Select(kv => $"{kv.Key} {kv.Value}")));

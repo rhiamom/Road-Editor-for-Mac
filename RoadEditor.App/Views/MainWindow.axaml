@@ -24,6 +24,7 @@
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#3a3a3e"/><TextBlock Text="Road" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#5a4828"/><TextBlock Text="Road in front of a lot" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#f0c83c"/><TextBlock Text="Lot front with no road" FontSize="12"/></StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#96781e"/><TextBlock Text="Lot front too steep for a road" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#c4403a"/><TextBlock Text="Lot" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#3468ba"/><TextBlock Text="Water" FontSize="12"/></StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="#4a6a36"/><TextBlock Text="Too steep for a road" FontSize="12"/></StackPanel>

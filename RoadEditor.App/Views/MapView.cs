@@ -74,7 +74,8 @@ public sealed class MapView : Control
         switch (d.GroundAt(x, y))
         {
             case Ground.Lot: return Bgra(196, 64, 58);
-            case Ground.LotFront: return Bgra(240, 200, 60);                      // a lot missing its road
+            case Ground.LotFront: return d.GroundRefuses(x, y) ? Bgra(150, 120, 30)  // missing road, can't have one
+                                                               : Bgra(240, 200, 60); // missing road
             case Ground.Water: return Bgra(52, 104, 186);
             case Ground.Edge: return Bgra(150, 150, 150);
         }

@@ -15,9 +15,10 @@
  *   Lots: a lot's rectangle includes the strip of road along its front,  *
  *   and its orientation says which edge that is (0 = row x=Top, 2 = row  *
  *   x=Top+Width-1, 3 = column y=Left, 1 = column y=Left+Height-1). The   *
- *   game only lets a lot sit where that strip is road, so the front      *
- *   squares can be drawn on but never erased, and the rest of the lot    *
- *   takes no road at all.                                                *
+ *   game only lets a lot sit where that strip is road, so a front road   *
+ *   can't be erased (unless it is on ground no road should be on), and   *
+ *   the rest of the lot takes no road at all. Fronts obey the water and  *
+ *   steepness limits like any other square.                              *
  *************************************************************************/
 
 using HoodReplace;
@@ -150,20 +151,32 @@ namespace RoadEditor.Engine
             if (x < 1 || y < 1 || x >= Width - 2 || y >= Height - 2) return Ground.Edge;
             var lot = LotAt(x, y);
             if (lot != null) return lot.IsFront(x, y) ? Ground.LotFront : Ground.Lot;
+            return Terrain_(x, y);
+        }
+
+        // What the ground itself is like, ignoring lots.
+        private Ground Terrain_(int x, int y)
+        {
             if (LowestCorner(x, y) < WaterLevel) return Ground.Water;
             if (Rise(x, y) > MaxRise) return Ground.Steep;
             return Ground.Open;
         }
 
+        /// <summary>True if the ground itself (lot or not) would refuse a road.</summary>
+        public bool GroundRefuses(int x, int y) => Terrain_(x, y) != Ground.Open;
+
         /// <summary>Why a road can't go here, or null if it can.</summary>
         public string? WhyNotDraw(int x, int y)
         {
-            switch (GroundAt(x, y))
+            var ground = GroundAt(x, y);
+            if (ground == Ground.Edge) return "Too close to the edge of the neighborhood.";
+            if (ground == Ground.Lot) return $"Inside the lot \"{LotAt(x, y)!.Name}\".";
+            // A lot's front gets no exemption: a road on a cliff looks broken whether or not a lot uses it.
+            string where = ground == Ground.LotFront ? $" (front of the lot \"{LotAt(x, y)!.Name}\")" : "";
+            switch (Terrain_(x, y))
             {
-                case Ground.Edge: return "Too close to the edge of the neighborhood.";
-                case Ground.Water: return "Water — roads over water need a bridge, which this version can't build.";
-                case Ground.Steep: return $"Too steep for a road (rises {Rise(x, y):F1}; the limit is {MaxRise:F0}).";
-                case Ground.Lot: return $"Inside the lot \"{LotAt(x, y)!.Name}\".";
+                case Ground.Water: return "Water — roads over water need a bridge, which this version can't build." + where;
+                case Ground.Steep: return $"Too steep for a road (rises {Rise(x, y):F1}; the limit is {MaxRise:F0})." + where;
                 default: return null;
             }
         }
@@ -172,7 +185,8 @@ namespace RoadEditor.Engine
         public string? WhyNotErase(int x, int y)
         {
             var lot = LotAt(x, y);
-            if (lot != null && lot.IsFront(x, y))
+            // A lot's front road is protected -- unless it sits on ground no road should be on.
+            if (lot != null && lot.IsFront(x, y) && !GroundRefuses(x, y))
                 return $"This road is the front of the lot \"{lot.Name}\"; the lot needs it.";
             return null;
         }
