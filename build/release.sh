@@ -2,7 +2,7 @@
 ###############################################################################
 #  Road Editor for Mac — build / sign / notarize a universal .app + .dmg
 #
-#  Usage:  build/release.sh [version]        (default version: 1.0.0)
+#  Usage:  build/release.sh [version]        (default version: 1.1.0)
 #
 #  Prereqs (one-time):
 #    - .NET 8 SDK at ~/.dotnet (Microsoft build; needed for osx-x64/arm64 RID
@@ -23,7 +23,7 @@ ROOT="$(pwd)"
 APP_NAME="Road Editor for Mac"
 PROJ="RoadEditor.App/RoadEditor.App.csproj"
 BUNDLE_ID="com.gramzesweatshop.roadeditor"
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.1.0}"
 SIGN_ID="Developer ID Application: Catherine Gramze (AJHGU52KS3)"
 NOTARY_PROFILE="clean-installer"
 DOTNET="${DOTNET:-$HOME/.dotnet/dotnet}"
